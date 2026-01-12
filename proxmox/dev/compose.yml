@@ -1,0 +1,28 @@
+services:
+  pve-1:
+    container_name: pve-1
+    hostname: pve-1
+    image: ${PVE_IMAGE-ghcr.io/longqt-sea/proxmox-ve-arm64}
+    restart: unless-stopped
+    stdin_open: true
+    tty: true
+    cgroup: private
+
+    privileged: true
+    shm_size: 1g
+    devices:
+      - /dev/kvm
+
+    ports:
+      - "2222:22"
+      - "3128:3128"
+      - "8006:8006"
+
+    environment:
+      PASSWORD: "${PVE_ROOT_PASSWORD-123}"
+
+    volumes:
+      - /usr/lib/modules:/usr/lib/modules:ro
+      - /sys/kernel/security:/sys/kernel/security
+      - ./VM-Backup:/var/lib/vz/dump
+      - ./ISOs:/var/lib/vz/template/iso

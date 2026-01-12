@@ -1,0 +1,149 @@
+---
+- name: Bootstrap Proxmox for Terraform + IaC
+  hosts: proxmox
+  gather_facts: false
+
+  pre_tasks:
+    - name: Read SSH pubkey from controller
+      ansible.builtin.set_fact:
+        ssh_pubkey: "{{ lookup('file', ssh_pubkey_file) }}"
+      delegate_to: localhost
+      run_once: true
+
+    - name: Ensure python3 exists (raw; needed for modules)
+      ansible.builtin.raw: |
+        if ! command -v python3 >/dev/null 2>&1; then
+          apt-get update -y
+          apt-get install -y python3
+        fi
+      changed_when: false
+
+    - name: Ensure sudo exists (raw)
+      ansible.builtin.raw: |
+        if ! dpkg -s sudo >/dev/null 2>&1; then
+          apt-get update -y
+          apt-get install -y sudo
+        fi
+      changed_when: false
+
+    - name: Gather facts now that python exists
+      ansible.builtin.setup:
+
+  tasks:
+    - name: Ensure terraform linux user exists
+      ansible.builtin.user:
+        name: "{{ terraform_linux_user }}"
+        shell: /bin/bash
+        create_home: true
+        groups: sudo
+        append: true
+
+    - name: Ensure SSH key present for terraform user
+      ansible.builtin.authorized_key:
+        user: "{{ terraform_linux_user }}"
+        key: "{{ ssh_pubkey }}"
+        state: present
+
+    - name: Ensure snippets directory exists
+      ansible.builtin.file:
+        path: "{{ snippets_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Install sudoers file (validated)
+      ansible.builtin.copy:
+        dest: "{{ sudoers_path }}"
+        content: "{{ sudoers_content }}"
+        owner: root
+        group: root
+        mode: "0440"
+        validate: "visudo -cf %s"
+
+    # --- Proxmox RBAC via pveum ---
+    - name: Check existing roles
+      ansible.builtin.command: pveum role list
+      register: role_list
+      changed_when: false
+
+    - name: Create role if missing
+      ansible.builtin.command: >
+        pveum role add {{ pve_role }} -privs
+        "Datastore.Allocate Datastore.AllocateSpace Datastore.AllocateTemplate Datastore.Audit
+         Pool.Allocate Sys.Audit Sys.Console Sys.Modify SDN.Use
+         VM.Allocate VM.Audit VM.Clone
+         VM.Config.CDROM VM.Config.Cloudinit VM.Config.CPU VM.Config.Disk VM.Config.HWType
+         VM.Config.Memory VM.Config.Network VM.Config.Options
+         VM.Migrate VM.Monitor VM.PowerMgmt
+         User.Modify"
+      when: pve_role not in role_list.stdout
+
+    - name: Check existing groups
+      ansible.builtin.command: pveum group list
+      register: group_list
+      changed_when: false
+
+    - name: Create group if missing
+      ansible.builtin.command: pveum group add {{ pve_group }}
+      when: pve_group not in group_list.stdout
+
+    - name: Check ACL list
+      ansible.builtin.command: pveum acl list
+      register: acl_list
+      changed_when: false
+
+    - name: Ensure ACL set for group at /
+      ansible.builtin.command: pveum acl modify / -group {{ pve_group }} -role {{ pve_role }}
+      when: acl_list.stdout is not search('^/\\s+.*\\s+' ~ pve_group ~ '\\s+' ~ pve_role ~ '\\s*$', multiline=True)
+
+    - name: Check existing users
+      ansible.builtin.command: pveum user list
+      register: user_list
+      changed_when: false
+
+    - name: Create user if missing
+      ansible.builtin.command: pveum useradd {{ pve_user }} -groups {{ pve_group }}
+      when: pve_user not in user_list.stdout
+
+    - name: Ensure user is in group (if user existed)
+      ansible.builtin.command: pveum user modify {{ pve_user }} -groups {{ pve_group }}
+      when: pve_user in user_list.stdout
+      changed_when: false
+
+    # --- Token: create if missing, store locally if created ---
+    - name: List existing tokens for user
+      ansible.builtin.command: pveum user token list {{ pve_user }}
+      register: token_list
+      changed_when: false
+      failed_when: false
+
+    - name: Create token if missing (secret printed once)
+      ansible.builtin.command: pveum user token add {{ pve_user }} {{ pve_token_name }} -privsep {{ pve_token_privsep }}
+      register: token_create
+      when: token_list.stdout is not search('^' ~ pve_token_name ~ '\\s*$', multiline=True)
+
+    - name: Ensure local secrets dir exists
+      ansible.builtin.file:
+        path: "{{ token_out_dir }}"
+        state: directory
+        mode: "0700"
+      delegate_to: localhost
+      run_once: true
+
+    - name: Save token output locally (controller) if created
+      ansible.builtin.copy:
+        dest: "{{ token_out_dir }}/{{ token_out_file }}"
+        content: "{{ token_create.stdout }}\n"
+        mode: "0600"
+      delegate_to: localhost
+      when: token_create is defined
+
+    - name: Report token status
+      ansible.builtin.debug:
+        msg: >-
+          {{
+            (token_create is defined)
+            | ternary(
+                'Token CREATED and saved to ' ~ token_out_dir ~ '/' ~ token_out_file ~ '.',
+                'Token already exists for ' ~ pve_user ~ '!' ~ pve_token_name ~ ' (secret cannot be re-shown). Rotate by deleting token then rerun.'
+              )
+          }}

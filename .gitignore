@@ -1,0 +1,45 @@
+# --- Terraform state / plan (contains secrets) ---
+**/.terraform/
+**/*.tfstate
+**/*.tfstate.*
+**/*.tfplan
+
+# --- Local variable files (often contain secrets) ---
+**/*.tfvars
+**/*.tfvars.json
+
+# Keep non-secret examples tracked
+!**/*.tfvars.example
+!**/*.tfvars.json.example
+
+# --- direnv ---
+**/.envrc
+**/.envrc.local
+**/.direnv/
+
+# --- Common env/secrets files ---
+**/.env
+**/.env.*
+!**/.env.example
+!**/.env.*.example
+
+# --- Keys / certs ---
+**/*.pem
+**/*.key
+**/*.p12
+**/*.pfx
+**/*.crt
+**/*.cer
+**/*.der
+**/*.jks
+**/id_rsa
+**/id_ed25519
+**/id_*        # catches weird key names
+
+# --- Logs that might leak ---
+**/*.log
+
+proxmox/dev/VM-Backup/
+proxmox/dev/ISOs/
+proxmox/.secrets/
+
