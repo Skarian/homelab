@@ -1,18 +1,28 @@
 #!/usr/bin/env bash
+# proxmox/dev/up.sh
 set -euo pipefail
 
 DEV_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 COMPOSE_FILE="$DEV_DIR/compose.yml"
+ENV_FILE="$DEV_DIR/.env"
 
+# Resolve password with precedence:
+# 1) environment variable PVE_ROOT_PASSWORD
+# 2) proxmox/dev/.env (PVE_ROOT_PASSWORD=...)
+# 3) default 123
+PVE_ROOT_PASSWORD="${PVE_ROOT_PASSWORD:-}"
+if [[ -z "${PVE_ROOT_PASSWORD}" && -f "$ENV_FILE" ]]; then
+  PVE_ROOT_PASSWORD="$(grep -E '^PVE_ROOT_PASSWORD=' "$ENV_FILE" | tail -n1 | cut -d= -f2- | tr -d '\r')"
+fi
 PVE_ROOT_PASSWORD="${PVE_ROOT_PASSWORD:-123}"
 
 orb start >/dev/null
 
 mkdir -p "$DEV_DIR/ISOs" "$DEV_DIR/VM-Backup"
 
-docker compose -f "$COMPOSE_FILE" down -t 0 --remove-orphans --volumes || true
-docker compose -f "$COMPOSE_FILE" pull
-docker compose -f "$COMPOSE_FILE" up -d
+docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" down -t 0 --remove-orphans --volumes || true
+docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" pull
+docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d
 
 echo "[dev-up] Waiting for container pve-1..."
 for _ in $(seq 1 60); do
@@ -24,7 +34,7 @@ done
 
 if ! docker ps --format '{{.Names}}' | grep -qx 'pve-1'; then
   echo "[dev-up] ERROR: container pve-1 not running" >&2
-  docker compose -f "$COMPOSE_FILE" logs --no-color | tail -n 200 >&2
+  docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" logs --no-color | tail -n 200 >&2
   exit 1
 fi
 
@@ -64,7 +74,7 @@ done
 
 if ! nc -z 127.0.0.1 2222 >/dev/null 2>&1; then
   echo "[dev-up] ERROR: SSH port never opened on 2222" >&2
-  docker compose -f "$COMPOSE_FILE" logs --no-color | tail -n 200 >&2
+  docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" logs --no-color | tail -n 200 >&2
   exit 1
 fi
 
@@ -81,5 +91,5 @@ for _ in $(seq 1 180); do
 done
 
 echo "[dev-up] ERROR: UI not reachable on 8006" >&2
-docker compose -f "$COMPOSE_FILE" logs --no-color | tail -n 200 >&2
+docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" logs --no-color | tail -n 200 >&2
 exit 1
