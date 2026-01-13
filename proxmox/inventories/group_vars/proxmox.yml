@@ -19,5 +19,5 @@ sudoers_content: |
 
 ssh_pubkey_file: "{{ lookup('env','HOME') + '/.ssh/id_ed25519.pub' }}"
 
-token_out_dir: "../.secrets/pve-api"
-token_out_file: "{{ inventory_file | basename | regex_replace('\\.ya?ml$', '') }}_{{ inventory_hostname }}_pve_api_token.json"
+token_out_dir: "../.secrets/pve-api/{{ inventory_file | basename | regex_replace('\\.ya?ml$', '') }}"
+token_out_file: "{{ inventory_hostname }}.json"
