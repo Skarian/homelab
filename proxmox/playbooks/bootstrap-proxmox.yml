@@ -178,7 +178,7 @@
           }}
 
     - name: Create token if missing (secret printed once)
-      ansible.builtin.command: pveum user token add {{ pve_user }} {{ pve_token_name }} -privsep {{ pve_token_privsep }}
+      ansible.builtin.command: pveum user token add {{ pve_user }} {{ pve_token_name }} -privsep {{ pve_token_privsep }} --output-format json
       register: token_create
       when: not token_exists
 
@@ -193,7 +193,7 @@
     - name: Save token output locally (controller) if created
       ansible.builtin.copy:
         dest: "{{ token_out_dir }}/{{ token_out_file }}"
-        content: "{{ token_create.stdout }}\n"
+        content: "{{ token_create.stdout | trim }}\n"
         mode: "0600"
       delegate_to: localhost
       when: token_create is defined and token_create.changed
