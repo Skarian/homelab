@@ -1,0 +1,23 @@
+terraform_linux_user: terraform
+
+sudoers_user: "{{ terraform_linux_user }}"
+
+pve_user: "terraform@pam"
+pve_group: "terraform-users"
+pve_role: "TerraformUser"
+pve_token_name: "token"
+pve_token_privsep: "0"
+
+snippets_dir: "/var/lib/vz/snippets"
+
+sudoers_path: "/etc/sudoers.d/{{ sudoers_user }}"
+sudoers_content: |
+  {{ sudoers_user }} ALL=(root) NOPASSWD: /sbin/pvesm
+  {{ sudoers_user }} ALL=(root) NOPASSWD: /sbin/qm
+  {{ sudoers_user }} ALL=(root) NOPASSWD: /usr/bin/tee /var/lib/vz/snippets/*
+  {{ sudoers_user }} ALL=(root) NOPASSWD: /usr/bin/tee /var/lib/vz/template/iso/*
+
+ssh_pubkey_file: "{{ lookup('env','HOME') + '/.ssh/id_ed25519.pub' }}"
+
+token_out_dir: "../.secrets"
+token_out_file: "{{ inventory_hostname }}_pve_api_token.txt"

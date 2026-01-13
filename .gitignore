@@ -42,4 +42,4 @@
 proxmox/dev/VM-Backup/
 proxmox/dev/ISOs/
 proxmox/.secrets/
-
+proxmox/inventories/host_vars/
