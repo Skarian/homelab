@@ -8,6 +8,12 @@ pve_role: "TerraformUser"
 pve_token_name: "token"
 pve_token_privsep: "0"
 
+op_vault: "Homelab"
+op_item_prefix: "proxmox"
+op_api_item_suffix: "api"
+op_ssh_key_item: "proxmox/ssh-bootstrap-key"
+op_service_account_item: "Service Account Auth Token: Homelab Service"
+
 snippets_dir: "/var/lib/vz/snippets"
 
 sudoers_path: "/etc/sudoers.d/{{ sudoers_user }}"
@@ -16,8 +22,3 @@ sudoers_content: |
   {{ sudoers_user }} ALL=(root) NOPASSWD: /sbin/qm
   {{ sudoers_user }} ALL=(root) NOPASSWD: /usr/bin/tee /var/lib/vz/snippets/*
   {{ sudoers_user }} ALL=(root) NOPASSWD: /usr/bin/tee /var/lib/vz/template/iso/*
-
-ssh_pubkey_file: "{{ lookup('env','HOME') + '/.ssh/id_ed25519.pub' }}"
-
-token_out_dir: "../.secrets/pve-api/{{ inventory_file | basename | regex_replace('\\.ya?ml$', '') }}"
-token_out_file: "{{ inventory_hostname }}.json"

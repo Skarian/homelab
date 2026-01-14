@@ -4,11 +4,68 @@
   gather_facts: false
 
   pre_tasks:
-    - name: Read SSH pubkey from controller
-      ansible.builtin.set_fact:
-        ssh_pubkey: "{{ lookup('file', ssh_pubkey_file) }}"
+    - name: Read service account token item from 1Password (local)
+      ansible.builtin.command: >
+        op item get "{{ op_service_account_item }}" --vault "{{ op_vault }}" --format json
+      register: op_service_account_item_get
+      changed_when: false
+      failed_when: false
       delegate_to: localhost
       run_once: true
+      no_log: true
+
+    - name: Set service account token from 1Password item
+      ansible.builtin.set_fact:
+        op_service_account_token: >-
+          {{
+            (op_service_account_item_get.stdout | default('{}') | from_json).fields
+            | selectattr('label', 'in', ['credential', 'token', 'password'])
+            | map(attribute='value')
+            | first
+            | default('')
+            | trim
+          }}
+      delegate_to: localhost
+      delegate_facts: true
+      run_once: true
+      no_log: true
+
+    - name: Fail if 1Password token is missing
+      ansible.builtin.fail:
+        msg: >-
+          OP_SERVICE_ACCOUNT_TOKEN not found. Unlock 1Password and ensure the item
+          "{{ op_service_account_item }}" in vault "{{ op_vault }}" has a field
+          labeled "credential", "token", or "password".
+      when: hostvars['localhost'].op_service_account_token | length == 0
+      delegate_to: localhost
+      run_once: true
+
+    - name: Read SSH key item from 1Password (local)
+      ansible.builtin.command: >
+        op item get "{{ op_ssh_key_item }}" --vault "{{ op_vault }}" --format json
+      register: op_ssh_key_item_get
+      changed_when: false
+      delegate_to: localhost
+      run_once: true
+      environment:
+        OP_SERVICE_ACCOUNT_TOKEN: "{{ hostvars['localhost'].op_service_account_token }}"
+
+    - name: Set SSH public key
+      ansible.builtin.set_fact:
+        ssh_pubkey: >-
+          {{
+            (op_ssh_key_item_get.stdout | from_json).fields
+            | selectattr('label', 'equalto', 'public key')
+            | map(attribute='value')
+            | first
+            | default('')
+          | trim
+          }}
+
+    - name: Fail if SSH public key is missing
+      ansible.builtin.fail:
+        msg: "public key not found in 1Password item {{ op_ssh_key_item }}"
+      when: ssh_pubkey | length == 0
 
     - name: Check for python3 (raw)
       ansible.builtin.raw: command -v python3
@@ -161,7 +218,7 @@
       when: user_exists
       changed_when: false
 
-    # --- Token: create if missing, store locally if created ---
+    # --- Token: create if missing, store in 1Password if created ---
     - name: List existing tokens for user
       ansible.builtin.command: pveum user token list {{ pve_user }} --output-format json
       register: token_list
@@ -187,22 +244,130 @@
       ansible.builtin.command: pveum user token add {{ pve_user }} {{ pve_token_name }} -privsep {{ pve_token_privsep }} --output-format json
       register: token_create
       when: not token_exists
+      no_log: true
 
-    - name: Ensure local secrets dir exists
-      ansible.builtin.file:
-        path: "{{ token_out_dir }}"
-        state: directory
-        mode: "0700"
-      delegate_to: localhost
-      run_once: true
-
-    - name: Save token output locally (controller) if created
-      ansible.builtin.copy:
-        dest: "{{ token_out_dir }}/{{ token_out_file }}"
-        content: "{{ token_create.stdout | trim }}\n"
-        mode: "0600"
-      delegate_to: localhost
+    - name: Build API token value if created
+      ansible.builtin.set_fact:
+        pve_api_token_value: >-
+          {{
+            ((token_create.stdout | from_json).tokenid | default(pve_user ~ '!' ~ pve_token_name))
+            ~ '='
+            ~ ((token_create.stdout | from_json).value | default(''))
+          }}
       when: token_create is defined and token_create.changed
+      no_log: true
+
+    - name: Set 1Password API item title
+      ansible.builtin.set_fact:
+        op_api_item_title: "{{ op_item_prefix }}/{{ inventory_hostname }}/{{ op_api_item_suffix }}"
+
+    - name: Fail if pve_endpoint is missing
+      ansible.builtin.fail:
+        msg: "pve_endpoint is required in host_vars for {{ inventory_hostname }}"
+      when: pve_endpoint is not defined or pve_endpoint | length == 0
+
+    - name: Check 1Password API item
+      ansible.builtin.command: >
+        op item get "{{ op_api_item_title }}" --vault "{{ op_vault }}" --format json
+      register: op_api_item_get
+      changed_when: false
+      failed_when: false
+      delegate_to: localhost
+      environment:
+        OP_SERVICE_ACCOUNT_TOKEN: "{{ hostvars['localhost'].op_service_account_token }}"
+
+    - name: Create 1Password API item if missing
+      ansible.builtin.shell: |
+        set -euo pipefail
+        op item template get "Secure Note" --format json | \
+          op item create --vault "{{ op_vault }}" --title "{{ op_api_item_title }}" --format json
+      when: op_api_item_get.rc != 0
+      delegate_to: localhost
+      environment:
+        OP_SERVICE_ACCOUNT_TOKEN: "{{ hostvars['localhost'].op_service_account_token }}"
+
+    - name: Read current endpoint from 1Password
+      ansible.builtin.set_fact:
+        op_endpoint_current: >-
+          {{
+            (op_api_item_get.rc == 0)
+            | ternary(
+                (op_api_item_get.stdout | from_json).fields
+                | selectattr('label', 'equalto', 'endpoint')
+                | map(attribute='value')
+                | first
+                | default(''),
+                ''
+              )
+          }}
+
+    - name: Warn if token exists but cannot be stored
+      ansible.builtin.debug:
+        msg: >-
+          1Password item {{ op_api_item_title }} created without a token because
+          the Proxmox API token already existed and its secret cannot be re-shown.
+          Rotate the token or set the token field manually in 1Password.
+      when:
+        - op_api_item_get.rc != 0
+        - token_create is not defined or not token_create.changed
+
+    - name: Write API token to 1Password if created
+      ansible.builtin.shell: |
+        set -euo pipefail
+        op item get "{{ op_api_item_title }}" --vault "{{ op_vault }}" --format json | \
+          python3 -c 'import json, os, sys
+        data = json.load(sys.stdin)
+        label = os.environ["OP_FIELD_LABEL"]
+        value = os.environ["OP_FIELD_VALUE"]
+        ftype = os.environ["OP_FIELD_TYPE"]
+        fields = data.get("fields", [])
+        for f in fields:
+          if f.get("label") == label:
+            f["value"] = value
+            f["type"] = ftype
+            break
+        else:
+          fields.append({"label": label, "type": ftype, "value": value})
+        data["fields"] = fields
+        json.dump(data, sys.stdout)' | \
+          op item edit "{{ op_api_item_title }}" --vault "{{ op_vault }}"
+      when: pve_api_token_value is defined and pve_api_token_value | length > 0
+      delegate_to: localhost
+      environment:
+        OP_SERVICE_ACCOUNT_TOKEN: "{{ hostvars['localhost'].op_service_account_token }}"
+        OP_FIELD_LABEL: "token"
+        OP_FIELD_VALUE: "{{ pve_api_token_value }}"
+        OP_FIELD_TYPE: "CONCEALED"
+      no_log: true
+
+    - name: Ensure endpoint stored in 1Password
+      ansible.builtin.shell: |
+        set -euo pipefail
+        op item get "{{ op_api_item_title }}" --vault "{{ op_vault }}" --format json | \
+          python3 -c 'import json, os, sys
+        data = json.load(sys.stdin)
+        label = os.environ["OP_FIELD_LABEL"]
+        value = os.environ["OP_FIELD_VALUE"]
+        ftype = os.environ["OP_FIELD_TYPE"]
+        fields = data.get("fields", [])
+        for f in fields:
+          if f.get("label") == label:
+            f["value"] = value
+            f["type"] = ftype
+            break
+        else:
+          fields.append({"label": label, "type": ftype, "value": value})
+        data["fields"] = fields
+        json.dump(data, sys.stdout)' | \
+          op item edit "{{ op_api_item_title }}" --vault "{{ op_vault }}"
+      when: op_endpoint_current != pve_endpoint
+      delegate_to: localhost
+      environment:
+        OP_SERVICE_ACCOUNT_TOKEN: "{{ hostvars['localhost'].op_service_account_token }}"
+        OP_FIELD_LABEL: "endpoint"
+        OP_FIELD_VALUE: "{{ pve_endpoint }}"
+        OP_FIELD_TYPE: "STRING"
+      no_log: true
 
     - name: Report token status
       ansible.builtin.debug:
@@ -210,7 +375,7 @@
           {{
             (token_create is defined and token_create.changed)
             | ternary(
-                'Token CREATED and saved to ' ~ token_out_dir ~ '/' ~ token_out_file ~ '.',
+                'Token CREATED and saved to 1Password item ' ~ op_api_item_title ~ '.',
                 'Token already exists for ' ~ pve_user ~ '!' ~ pve_token_name ~ ' (secret cannot be re-shown). Rotate by deleting token then rerun.'
               )
           }}
