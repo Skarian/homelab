@@ -19,3 +19,12 @@
 - Overall lab architecture is still evolving; no complete topology documented yet.
 - Prefer `pveum` JSON output for idempotent checks to avoid fragile table parsing.
 - Secrets live in gitignored per-host files under `proxmox/inventories/host_vars/`, and generated tokens go to `proxmox/.secrets/`.
+
+## 2026-01-14 — 1Password Integration, Bootstrap Hardening, and Docs
+
+- Implemented 1Password-backed bootstrap flow: service account token, SSH pubkey, and per-host API token/endpoint stored in 1Password.
+- Removed reliance on local `.secrets/` for tokens; made endpoint writes idempotent and marked sensitive steps `no_log`.
+- Added PVE Root password sourcing from 1Password with optional host_vars override.
+- Updated dev startup to prefer 1Password PVE Root and removed password echo.
+- Added `docs/1password.md` and reorganized documentation between `docs/` and `proxmox/README.md` for clear workflows.
+- Verified bootstrap idempotency on fresh dev environment (second run changed=0).
