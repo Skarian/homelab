@@ -18,6 +18,9 @@ Required items (Homelab vault):
   - `endpoint` (example: `https://192.168.1.10:8006/`)
   - `token` (example: `terraform@pam!token=...`)
 
+- `PVE Root` (shared root credential)
+  - `password`
+
 ## Integration points
 
 - Service account token is read from the item:

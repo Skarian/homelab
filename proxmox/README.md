@@ -16,13 +16,20 @@ Bootstrap and configure Proxmox nodes for Terraform/IaC. The current playbook se
 
 ### Secrets and per-host passwords
 
-Store SSH passwords in `inventories/host_vars/<hostname>.yml` so Ansible picks the right password
-based on the target host. These files are gitignored.
+By default, the bootstrap playbook reads the root password from the 1Password
+item `PVE Root`. The only required per-host value is the endpoint.
 
-Example:
+Example (normal case):
+
+```yaml
+pve_endpoint: "https://<host-or-ip>:8006/"
+```
+
+Optional override (only if a host has a different root password):
 
 ```yaml
 ansible_password: "your-host-password"
+pve_endpoint: "https://<host-or-ip>:8006/"
 ```
 
 ### 1Password integration
@@ -34,6 +41,7 @@ Requirements:
 - 1Password CLI (`op`)
 - 1Password item `Service Account Auth Token: Homelab Service` with a `credential` field
 - 1Password item `proxmox/ssh-bootstrap-key` with a `public key` field
+- 1Password item `PVE Root` with a `password` field
 
 Per-host API items are stored as: `proxmox/<host>/api` with fields `endpoint` and `token`.
 
@@ -49,7 +57,7 @@ For 1Password data model details, see `docs/1password.md`.
    - `inventories/dev.yml` or `inventories/homelab.yml`
 4. Add per-host secrets (gitignored):
    - `inventories/host_vars/<host>.yml`
-   - Example:
+   - Example (override only):
      ```yaml
      ansible_password: "<root-password>"
      pve_endpoint: "https://<host-or-ip>:8006/"
@@ -92,6 +100,10 @@ To rotate:
 
 - **Missing endpoint**
   - Make sure `pve_endpoint` exists in `inventories/host_vars/<host>.yml` for first bootstrap.
+
+- **Missing root password**
+  - Ensure `PVE Root` exists in 1Password with a `password` field.
+  - Or set `ansible_password` in `inventories/host_vars/<host>.yml` as an override.
 
 ### Example run
 

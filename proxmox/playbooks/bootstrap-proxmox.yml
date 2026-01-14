@@ -67,6 +67,49 @@
         msg: "public key not found in 1Password item {{ op_ssh_key_item }}"
       when: ssh_pubkey | length == 0
 
+    - name: Read PVE Root item for bootstrap auth (local)
+      ansible.builtin.command: >
+        op item get "PVE Root" --vault "{{ op_vault }}" --format json
+      register: op_pve_root_item_get
+      changed_when: false
+      failed_when: false
+      delegate_to: localhost
+      run_once: true
+      no_log: true
+      when: ansible_password is not defined or ansible_password | length == 0
+
+    - name: Set bootstrap auth password from 1Password (if not provided)
+      ansible.builtin.set_fact:
+        ansible_password: >-
+          {{
+            (op_pve_root_item_get.stdout | default('{}') | from_json).fields
+            | selectattr('label', 'in', ['password', 'credential'])
+            | map(attribute='value')
+            | first
+            | default('')
+            | trim
+          }}
+      no_log: true
+      when: ansible_password is not defined or ansible_password | length == 0
+
+    - name: Sanity check PVE Root item for bootstrap auth
+      ansible.builtin.fail:
+        msg: >-
+          1Password item "PVE Root" in vault "{{ op_vault }}" is missing a
+          "password" (or "credential") field. Add it or set ansible_password
+          in host_vars as an override.
+      when:
+        - ansible_password is not defined or ansible_password | length == 0
+        - op_pve_root_item_get.rc == 0
+
+    - name: Fail if root password is missing
+      ansible.builtin.fail:
+        msg: >-
+          Root password not found. Set ansible_password in host_vars for this host,
+          or add a 1Password item named "PVE Root" with a "password" field.
+      when:
+        - ansible_password is not defined or ansible_password | length == 0
+
     - name: Check for python3 (raw)
       ansible.builtin.raw: command -v python3
       register: python3_check

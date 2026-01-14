@@ -8,9 +8,15 @@ ENV_FILE="$DEV_DIR/.env"
 
 # Resolve password with precedence:
 # 1) environment variable PVE_ROOT_PASSWORD
-# 2) proxmox/dev/.env (PVE_ROOT_PASSWORD=...)
-# 3) default 123
+# 2) 1Password item (default: Homelab vault, "PVE Root" item, "password" field)
+# 3) proxmox/dev/.env (PVE_ROOT_PASSWORD=...)
+# 4) default 123
 PVE_ROOT_PASSWORD="${PVE_ROOT_PASSWORD:-}"
+OP_VAULT="${OP_VAULT:-Homelab}"
+OP_PVE_ROOT_ITEM="${OP_PVE_ROOT_ITEM:-PVE Root}"
+if [[ -z "${PVE_ROOT_PASSWORD}" ]] && command -v op >/dev/null 2>&1; then
+  PVE_ROOT_PASSWORD="$(op read "op://${OP_VAULT}/${OP_PVE_ROOT_ITEM}/password" 2>/dev/null || true)"
+fi
 if [[ -z "${PVE_ROOT_PASSWORD}" && -f "$ENV_FILE" ]]; then
   PVE_ROOT_PASSWORD="$(grep -E '^PVE_ROOT_PASSWORD=' "$ENV_FILE" | tail -n1 | cut -d= -f2- | tr -d '\r')"
 fi
@@ -84,7 +90,6 @@ for _ in $(seq 1 180); do
     echo "[dev-up] OK: UI is up"
     echo "[dev-up] UI:   https://localhost:8006"
     echo "[dev-up] SSH:  ssh -p 2222 root@127.0.0.1"
-    echo "[dev-up] PASS: $PVE_ROOT_PASSWORD"
     exit 0
   fi
   sleep 1
