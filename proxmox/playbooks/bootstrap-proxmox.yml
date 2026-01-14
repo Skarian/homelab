@@ -45,8 +45,6 @@
         name: "{{ terraform_linux_user }}"
         shell: /bin/bash
         create_home: true
-        groups: sudo
-        append: true
 
     - name: Ensure SSH key present for terraform user
       ansible.builtin.authorized_key:
