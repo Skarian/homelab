@@ -1,0 +1,117 @@
+---
+- name: Auth | Read 1Password service account item (local)
+  ansible.builtin.command: >
+    op item get "{{ op_service_account_item }}" --vault "{{ op_vault }}" --format json
+  register: op_service_account_item_get
+  changed_when: false
+  failed_when: false
+  delegate_to: localhost
+  run_once: true
+  no_log: true
+  when: op_service_account_token is not defined or op_service_account_token | length == 0
+
+- name: Auth | Parse service account token field
+  ansible.builtin.set_fact:
+    op_service_account_token: >-
+      {{
+        (op_service_account_item_get.stdout | default('{}') | from_json).fields
+        | selectattr('label', 'in', ['credential', 'token', 'password'])
+        | map(attribute='value')
+        | first
+        | default('')
+        | trim
+      }}
+  delegate_to: localhost
+  delegate_facts: true
+  run_once: true
+  no_log: true
+  when: op_service_account_token is not defined or op_service_account_token | length == 0
+
+- name: Auth | Fail if service account token missing
+  ansible.builtin.fail:
+    msg: >-
+      OP_SERVICE_ACCOUNT_TOKEN not found. Unlock 1Password and ensure the item
+      "{{ op_service_account_item }}" in vault "{{ op_vault }}" has a field
+      labeled "credential", "token", or "password".
+  when: hostvars['localhost'].op_service_account_token | length == 0
+  delegate_to: localhost
+  run_once: true
+
+- name: Auth | Build 1Password environment for CLI calls
+  ansible.builtin.set_fact:
+    op_env:
+      OP_SERVICE_ACCOUNT_TOKEN: "{{ hostvars['localhost'].op_service_account_token }}"
+  delegate_to: localhost
+  delegate_facts: true
+  run_once: true
+  no_log: true
+
+- name: Secrets | Read SSH key item (local)
+  ansible.builtin.command: >
+    op item get "{{ op_ssh_key_item }}" --vault "{{ op_vault }}" --format json
+  register: op_ssh_key_item_get
+  changed_when: false
+  delegate_to: localhost
+  run_once: true
+  environment: "{{ hostvars['localhost'].op_env }}"
+
+- name: Secrets | Parse SSH public key
+  ansible.builtin.set_fact:
+    ssh_pubkey: >-
+      {{
+        (op_ssh_key_item_get.stdout | from_json).fields
+        | selectattr('label', 'equalto', 'public key')
+        | map(attribute='value')
+        | first
+        | default('')
+      | trim
+      }}
+
+- name: Secrets | Fail if SSH public key missing
+  ansible.builtin.fail:
+    msg: "public key not found in 1Password item {{ op_ssh_key_item }}"
+  when: ssh_pubkey | length == 0
+
+- name: Auth | Read PVE Root item when ansible_password missing (local)
+  ansible.builtin.command: >
+    op item get "{{ op_pve_root_item }}" --vault "{{ op_vault }}" --format json
+  register: op_pve_root_item_get
+  changed_when: false
+  failed_when: false
+  delegate_to: localhost
+  run_once: true
+  no_log: true
+  when: ansible_password is not defined or ansible_password | length == 0
+  environment: "{{ hostvars['localhost'].op_env }}"
+
+- name: Auth | Parse bootstrap password when missing
+  ansible.builtin.set_fact:
+    ansible_password: >-
+      {{
+        (op_pve_root_item_get.stdout | default('{}') | from_json).fields
+        | selectattr('label', 'in', ['password', 'credential'])
+        | map(attribute='value')
+        | first
+        | default('')
+        | trim
+      }}
+  no_log: true
+  when: ansible_password is not defined or ansible_password | length == 0
+
+- name: Auth | Validate PVE Root item fields
+  ansible.builtin.fail:
+    msg: >-
+      1Password item "{{ op_pve_root_item }}" in vault "{{ op_vault }}" is missing a
+      "password" (or "credential") field. Add it or set ansible_password
+      in host_vars as an override.
+  when:
+    - ansible_password is not defined or ansible_password | length == 0
+    - op_pve_root_item_get.rc == 0
+
+- name: Auth | Fail if bootstrap password missing
+  ansible.builtin.fail:
+    msg: >-
+      Root password not found. Set ansible_password in host_vars for this host,
+      or add a 1Password item named "{{ op_pve_root_item }}" with a "password" field.
+  when:
+    - ansible_password is not defined or ansible_password | length == 0

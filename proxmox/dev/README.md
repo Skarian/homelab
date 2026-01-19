@@ -1,6 +1,7 @@
 # Proxmox Dev Environment (macOS)
 
 Disposable Proxmox VE instance in a container for testing Ansible/Terraform workflows locally.
+The dev environment uses the same bootstrap flow and 1Password secrets model as real nodes.
 
 ## Requirements
 

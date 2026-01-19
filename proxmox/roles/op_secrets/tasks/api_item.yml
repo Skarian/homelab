@@ -1,0 +1,110 @@
+---
+- name: API | Set 1Password API item title
+  ansible.builtin.set_fact:
+    op_api_item_title: "{{ op_item_prefix }}/{{ inventory_hostname }}/{{ op_api_item_suffix }}"
+
+- name: API | Fail if pve_endpoint is missing
+  ansible.builtin.fail:
+    msg: "pve_endpoint is required in host_vars for {{ inventory_hostname }}"
+  when: pve_endpoint is not defined or pve_endpoint | length == 0
+
+- name: API | Check 1Password API item
+  ansible.builtin.command: >
+    op item get "{{ op_api_item_title }}" --vault "{{ op_vault }}" --format json
+  register: op_api_item_get
+  changed_when: false
+  failed_when: false
+  delegate_to: localhost
+  environment: "{{ hostvars['localhost'].op_env }}"
+
+- name: API | Create 1Password API item if missing
+  ansible.builtin.shell: |
+    set -euo pipefail
+    op item template get "Secure Note" --format json | \
+      op item create --vault "{{ op_vault }}" --title "{{ op_api_item_title }}" --format json
+  when: op_api_item_get.rc != 0
+  delegate_to: localhost
+  environment: "{{ hostvars['localhost'].op_env }}"
+
+- name: API | Read current endpoint from 1Password
+  ansible.builtin.set_fact:
+    op_endpoint_current: >-
+      {{
+        (op_api_item_get.rc == 0)
+        | ternary(
+            (op_api_item_get.stdout | from_json).fields
+            | selectattr('label', 'equalto', 'endpoint')
+            | map(attribute='value')
+            | first
+            | default(''),
+            ''
+          )
+      }}
+
+- name: API | Warn if token exists but cannot be stored
+  ansible.builtin.debug:
+    msg: >-
+      1Password item {{ op_api_item_title }} created without a token because
+      the Proxmox API token already existed and its secret cannot be re-shown.
+      Rotate the token or set the token field manually in 1Password.
+  when:
+    - op_api_item_get.rc != 0
+    - token_create is not defined or not token_create.changed
+
+- name: API | Write API token to 1Password if created
+  ansible.builtin.shell: |
+    set -euo pipefail
+    op item get "{{ op_api_item_title }}" --vault "{{ op_vault }}" --format json | \
+      python3 -c 'import json, os, sys
+    data = json.load(sys.stdin)
+    label = os.environ["OP_FIELD_LABEL"]
+    value = os.environ["OP_FIELD_VALUE"]
+    ftype = os.environ["OP_FIELD_TYPE"]
+    fields = data.get("fields", [])
+    for f in fields:
+      if f.get("label") == label:
+        f["value"] = value
+        f["type"] = ftype
+        break
+    else:
+      fields.append({"label": label, "type": ftype, "value": value})
+    data["fields"] = fields
+    json.dump(data, sys.stdout)' | \
+      op item edit "{{ op_api_item_title }}" --vault "{{ op_vault }}"
+  when: pve_api_token_value is defined and pve_api_token_value | length > 0
+  delegate_to: localhost
+  environment:
+    OP_SERVICE_ACCOUNT_TOKEN: "{{ hostvars['localhost'].op_env.OP_SERVICE_ACCOUNT_TOKEN }}"
+    OP_FIELD_LABEL: "token"
+    OP_FIELD_VALUE: "{{ pve_api_token_value }}"
+    OP_FIELD_TYPE: "CONCEALED"
+  no_log: true
+
+- name: API | Ensure endpoint stored in 1Password
+  ansible.builtin.shell: |
+    set -euo pipefail
+    op item get "{{ op_api_item_title }}" --vault "{{ op_vault }}" --format json | \
+      python3 -c 'import json, os, sys
+    data = json.load(sys.stdin)
+    label = os.environ["OP_FIELD_LABEL"]
+    value = os.environ["OP_FIELD_VALUE"]
+    ftype = os.environ["OP_FIELD_TYPE"]
+    fields = data.get("fields", [])
+    for f in fields:
+      if f.get("label") == label:
+        f["value"] = value
+        f["type"] = ftype
+        break
+    else:
+      fields.append({"label": label, "type": ftype, "value": value})
+    data["fields"] = fields
+    json.dump(data, sys.stdout)' | \
+      op item edit "{{ op_api_item_title }}" --vault "{{ op_vault }}"
+  when: op_endpoint_current != pve_endpoint
+  delegate_to: localhost
+  environment:
+    OP_SERVICE_ACCOUNT_TOKEN: "{{ hostvars['localhost'].op_env.OP_SERVICE_ACCOUNT_TOKEN }}"
+    OP_FIELD_LABEL: "endpoint"
+    OP_FIELD_VALUE: "{{ pve_endpoint }}"
+    OP_FIELD_TYPE: "STRING"
+  no_log: true

@@ -30,4 +30,6 @@ Required items (Homelab vault):
 - The bootstrap playbook writes:
   - `proxmox/<host>/api` → `endpoint`, `token`
 
+All 1Password access is centralized in the Ansible role at `proxmox/roles/op_secrets`.
+
 For operational workflows (bootstrap, add node, rotation), see `proxmox/README.md`.

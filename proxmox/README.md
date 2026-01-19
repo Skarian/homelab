@@ -34,6 +34,7 @@ pve_endpoint: "https://<host-or-ip>:8006/"
 
 ### 1Password integration
 
+All 1Password access is centralized in the Ansible role `roles/op_secrets`.
 The playbook reads the SSH public key from 1Password and writes per-host API tokens to 1Password.
 
 Requirements:
@@ -46,6 +47,10 @@ Requirements:
 Per-host API items are stored as: `proxmox/<host>/api` with fields `endpoint` and `token`.
 
 For 1Password data model details, see `docs/1password.md`.
+
+### Roles
+
+- `roles/op_secrets` — reads 1Password items and syncs per-host API tokens/endpoints.
 
 ### Bootstrap from scratch (dev or real node)
 
